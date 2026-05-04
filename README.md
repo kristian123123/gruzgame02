@@ -27,6 +27,7 @@ Cyberpunk mini game for Base App:
 - Next.js App Router
 - wagmi + viem
 - Base Mini App SDK
+- Solidity contract (source in `contracts/RoboTapperOnchain.sol`)
 
 ## Environment
 
@@ -34,6 +35,7 @@ Create `.env.local`:
 
 ```bash
 NEXT_PUBLIC_URL=http://localhost:3000
+NEXT_PUBLIC_ROBO_TAPPER_CONTRACT=0xYourDeployedContractAddress
 ```
 
 ## Run
@@ -42,3 +44,13 @@ NEXT_PUBLIC_URL=http://localhost:3000
 npm install
 npm run dev
 ```
+
+## Onchain check-in contract
+
+App now sends real contract calls (`tap`, `checkIn`) so BaseScan shows interaction with your app contract.
+
+1. Open `contracts/RoboTapperOnchain.sol` in Remix.
+2. Deploy to Base Mainnet (or Base Sepolia for testing).
+3. Copy deployed address.
+4. Set `NEXT_PUBLIC_ROBO_TAPPER_CONTRACT` in `.env.local` and Vercel env vars.
+5. Redeploy.

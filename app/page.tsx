@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMiniApp } from "./providers/MiniAppProvider";
-import { stringToHex } from "viem";
+import { encodeFunctionData } from "viem";
 import { base } from "wagmi/chains";
-import { useAccount, usePublicClient, useSendTransaction, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useSendTransaction, useWaitForTransactionReceipt } from "wagmi";
+import { getRoboTapperContractAddress, roboTapperOnchainAbi } from "@/lib/contracts/roboTapperOnchain";
 import styles from "./page.module.css";
 
 type View = "menu" | "tap" | "leaderboard" | "checkin";
@@ -78,13 +79,16 @@ function savePlayers(players: Record<string, PlayerState>) {
 export default function Home() {
   const { context } = useMiniApp();
   const { address, isConnected, chainId } = useAccount();
-  const publicClient = usePublicClient({ chainId: base.id });
+  const contractAddress = getRoboTapperContractAddress();
+  const hasOnchainContract = Boolean(contractAddress);
   const [view, setView] = useState<View>("menu");
   const [state, setState] = useState<GameState | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
   const [countdown, setCountdown] = useState("00:00:00");
   const [error, setError] = useState("");
   const [checkedUsersCount, setCheckedUsersCount] = useState(0);
+  const [pendingTaps, setPendingTaps] = useState(0);
+  const [isSubmittingTap, setIsSubmittingTap] = useState(false);
   const [isSubmittingCheckin, setIsSubmittingCheckin] = useState(false);
   const name = useMemo(
     () => context?.user?.displayName || (address ? `Player ${address.slice(2, 6).toUpperCase()}` : "Player"),
@@ -201,40 +205,77 @@ export default function Home() {
     void refreshAfterTx();
   }, [address, fetchState, isSubmittingCheckin, isTxMined]);
 
-  const handleTap = () => {
-    if (!state || !address) return;
-    const players = parsePlayers();
-    const key = address.toLowerCase();
-    const player = players[key] ?? {
-      score: 0,
-      streak: 0,
-      lastCheckinSlot: null,
-      totalCheckins: 0,
+  useEffect(() => {
+    const refreshAfterTapTx = async () => {
+      if (!isTxMined || !isSubmittingTap || !address || pendingTaps <= 0) return;
+      const players = parsePlayers();
+      const key = address.toLowerCase();
+      const player = players[key] ?? {
+        score: 0,
+        streak: 0,
+        lastCheckinSlot: null,
+        totalCheckins: 0,
+      };
+      const tapPoints = pendingTaps * (1 + player.streak * 0.1);
+      players[key] = {
+        ...player,
+        score: Number((player.score + tapPoints).toFixed(2)),
+      };
+      savePlayers(players);
+      setPendingTaps(0);
+      setIsSubmittingTap(false);
+      await fetchState();
     };
+    void refreshAfterTapTx();
+  }, [address, fetchState, isSubmittingTap, isTxMined, pendingTaps]);
 
-    const nextScore = Number((player.score + (1 + player.streak * 0.1)).toFixed(2));
-    players[key] = { ...player, score: nextScore };
-    savePlayers(players);
+  const handleTap = () => {
+    if (!state || !address || !isCorrectChain || isBusy) return;
+    setPendingTaps((prev) => prev + 1);
+  };
 
-    setState((prev) =>
-      prev
-        ? {
-            ...prev,
-            score: nextScore,
-          }
-        : prev,
-    );
-    updateLeaderboard();
+  const handleSyncTaps = async () => {
+    if (!address || !isCorrectChain || pendingTaps <= 0) return;
+    if (!hasOnchainContract || !contractAddress) {
+      setError("Не задан NEXT_PUBLIC_ROBO_TAPPER_CONTRACT. Добавь адрес деплоя контракта в env.");
+      return;
+    }
+    setError("");
+    try {
+      setIsSubmittingTap(true);
+      const data = encodeFunctionData({
+        abi: roboTapperOnchainAbi,
+        functionName: "tap",
+        args: [BigInt(pendingTaps)],
+      });
+      await sendTransactionAsync({
+        to: contractAddress,
+        data,
+        value: BigInt(0),
+        chainId: base.id,
+      });
+    } catch (err) {
+      setIsSubmittingTap(false);
+      setError(err instanceof Error ? err.message : "Не удалось отправить onchain транзакцию для тапов.");
+    }
   };
 
   const handleCheckin = async () => {
-    if (!address || !state?.canCheckinNow || !publicClient) return;
+    if (!address || !state?.canCheckinNow) return;
+    if (!hasOnchainContract || !contractAddress) {
+      setError("Не задан NEXT_PUBLIC_ROBO_TAPPER_CONTRACT. Добавь адрес деплоя контракта в env.");
+      return;
+    }
     setError("");
     try {
       setIsSubmittingCheckin(true);
+      const data = encodeFunctionData({
+        abi: roboTapperOnchainAbi,
+        functionName: "checkIn",
+      });
       await sendTransactionAsync({
-        to: address,
-        data: stringToHex(`gruzgame02-checkin:${Date.now()}`),
+        to: contractAddress,
+        data,
         value: BigInt(0),
         chainId: base.id,
       });
@@ -244,9 +285,10 @@ export default function Home() {
     }
   };
 
-  const isBusy = isWritePending || isTxMining || isSubmittingCheckin;
+  const isBusy = isWritePending || isTxMining || isSubmittingCheckin || isSubmittingTap;
   const isCorrectChain = chainId === base.id;
   const multiplier = state ? state.multiplier : 1;
+  const projectedScore = Number(((state?.score ?? 0) + pendingTaps * multiplier).toFixed(2));
 
   return (
     <main className={styles.container}>
@@ -272,7 +314,7 @@ export default function Home() {
         <div className={styles.scorePanel}>
           <div>
             <p className={styles.metaLabel}>Очки</p>
-            <p className={styles.metaValue}>{state?.score.toFixed(2) ?? "0.00"}</p>
+            <p className={styles.metaValue}>{projectedScore.toFixed(2)}</p>
           </div>
           <div>
             <p className={styles.metaLabel}>Streak</p>
@@ -285,6 +327,11 @@ export default function Home() {
         </div>
 
         <p className={styles.hint}>Уникальных пользователей с check-in: {checkedUsersCount}</p>
+        {!hasOnchainContract && (
+          <p className={styles.warning}>
+            Для onchain-операций укажи `NEXT_PUBLIC_ROBO_TAPPER_CONTRACT` (адрес деплоенного контракта).
+          </p>
+        )}
 
         {view === "menu" && (
           <div className={styles.menuButtons}>
@@ -307,6 +354,15 @@ export default function Home() {
               <span className={styles.robotCaption}>ТАПАЙ РОБОТА</span>
             </button>
             <p className={styles.hint}>Базовый тап = 1 очко. Каждый check-in добавляет +10% к тапу.</p>
+            <p className={styles.hint}>Неотправленных тапов: {pendingTaps}</p>
+            <button
+              className={styles.neonButton}
+              type="button"
+              onClick={() => void handleSyncTaps()}
+              disabled={pendingTaps <= 0 || !isCorrectChain || isBusy}
+            >
+              {isSubmittingTap || isWritePending || isTxMining ? "Транзакция..." : `Отправить ${pendingTaps} тап(ов) onchain`}
+            </button>
           </div>
         )}
 
@@ -326,7 +382,7 @@ export default function Home() {
                 ? "Транзакция..."
                 : state?.canCheckinNow
                   ? "Сделать ончейн check-in"
-                  : "Чек-ин уже сделан сегодня"}
+                  : "Чек-ин уже сделан в этом окне"}
             </button>
             {txHash && <p className={styles.hint}>Tx: {shortWallet(txHash)}</p>}
             <p className={styles.hint}>Всего твоих check-in: {state?.totalCheckins ?? 0}</p>
