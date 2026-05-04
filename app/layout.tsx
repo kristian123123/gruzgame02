@@ -14,7 +14,7 @@ export async function generateMetadata(): Promise<Metadata> {
         version: farcasterConfig.miniapp.version,
         imageUrl: farcasterConfig.miniapp.heroImageUrl,
         button: {
-          title: "Open GruzGame 02",
+          title: "Open Robo Tapper",
           action: {
             name: "Launch Game",
             type: "launch_frame",

@@ -28,12 +28,12 @@ interface LeaderboardRow {
 interface PlayerState {
   score: number;
   streak: number;
-  lastCheckinDayKey: string | null;
+  lastCheckinSlot: number | null;
   totalCheckins: number;
 }
 
 const STORAGE_KEY = "gruzgame02:players";
-const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
+const CHECKIN_INTERVAL_SECONDS = 10 * 60;
 
 function shortWallet(wallet: string) {
   if (!wallet) return "";
@@ -48,37 +48,14 @@ function formatCountdownFromSeconds(seconds: number): string {
   return `${h}:${m}:${s}`;
 }
 
-function getMoscowDayKey(date: Date = new Date()): string {
-  const moscowNow = new Date(date.getTime() + MOSCOW_OFFSET_MS);
-  const y = moscowNow.getUTCFullYear();
-  const m = String(moscowNow.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(moscowNow.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+function getCurrentCheckinSlot(nowMs: number = Date.now()): number {
+  return Math.floor(nowMs / (CHECKIN_INTERVAL_SECONDS * 1000));
 }
 
-function getPreviousDayKey(dayKey: string): string {
-  const [y, m, d] = dayKey.split("-").map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  date.setUTCDate(date.getUTCDate() - 1);
-  const py = date.getUTCFullYear();
-  const pm = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const pd = String(date.getUTCDate()).padStart(2, "0");
-  return `${py}-${pm}-${pd}`;
-}
-
-function getSecondsToNextMoscowMidnight(): number {
-  const now = Date.now();
-  const moscowNow = new Date(now + MOSCOW_OFFSET_MS);
-  const nextMoscowMidnightUtcMs =
-    Date.UTC(
-      moscowNow.getUTCFullYear(),
-      moscowNow.getUTCMonth(),
-      moscowNow.getUTCDate() + 1,
-      0,
-      0,
-      0
-    ) - MOSCOW_OFFSET_MS;
-  return Math.max(0, Math.floor((nextMoscowMidnightUtcMs - now) / 1000));
+function getSecondsToNextCheckinWindow(nowMs: number = Date.now()): number {
+  const nowSeconds = Math.floor(nowMs / 1000);
+  const remainder = nowSeconds % CHECKIN_INTERVAL_SECONDS;
+  return remainder === 0 ? CHECKIN_INTERVAL_SECONDS : CHECKIN_INTERVAL_SECONDS - remainder;
 }
 
 function parsePlayers(): Record<string, PlayerState> {
@@ -145,24 +122,24 @@ export default function Home() {
     try {
       const players = parsePlayers();
       const key = address.toLowerCase();
-      const todayKey = getMoscowDayKey();
+      const currentSlot = getCurrentCheckinSlot();
       const player = players[key] ?? {
         score: 0,
         streak: 0,
-        lastCheckinDayKey: null,
+        lastCheckinSlot: null,
         totalCheckins: 0,
       };
-      const canCheckinNow = player.lastCheckinDayKey !== todayKey;
+      const canCheckinNow = player.lastCheckinSlot !== currentSlot;
 
       setState({
         score: player.score,
         streak: player.streak,
         multiplier: 1 + player.streak * 0.1,
         canCheckinNow,
-        todayKey,
+        todayKey: String(currentSlot),
         totalCheckins: player.totalCheckins,
       });
-      setCountdown(formatCountdownFromSeconds(getSecondsToNextMoscowMidnight()));
+      setCountdown(formatCountdownFromSeconds(getSecondsToNextCheckinWindow()));
       updateLeaderboard();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка чтения локального состояния.");
@@ -176,11 +153,11 @@ export default function Home() {
   }, [isConnected, address, fetchState]);
 
   useEffect(() => {
-    let remaining = getSecondsToNextMoscowMidnight();
+    let remaining = getSecondsToNextCheckinWindow();
     const tick = () => {
       setCountdown(formatCountdownFromSeconds(remaining));
       if (remaining <= 0) {
-        remaining = getSecondsToNextMoscowMidnight();
+        remaining = getSecondsToNextCheckinWindow();
         void fetchState();
       } else {
         remaining = Math.max(0, remaining - 1);
@@ -198,21 +175,21 @@ export default function Home() {
       if (!isTxMined || !isSubmittingCheckin || !address) return;
       const players = parsePlayers();
       const key = address.toLowerCase();
-      const todayKey = getMoscowDayKey();
-      const previousDayKey = getPreviousDayKey(todayKey);
+      const currentSlot = getCurrentCheckinSlot();
+      const previousSlot = currentSlot - 1;
       const player = players[key] ?? {
         score: 0,
         streak: 0,
-        lastCheckinDayKey: null,
+        lastCheckinSlot: null,
         totalCheckins: 0,
       };
 
-      if (player.lastCheckinDayKey !== todayKey) {
-        const nextStreak = player.lastCheckinDayKey === previousDayKey ? player.streak + 1 : 1;
+      if (player.lastCheckinSlot !== currentSlot) {
+        const nextStreak = player.lastCheckinSlot === previousSlot ? player.streak + 1 : 1;
         players[key] = {
           ...player,
           streak: nextStreak,
-          lastCheckinDayKey: todayKey,
+          lastCheckinSlot: currentSlot,
           totalCheckins: player.totalCheckins + 1,
         };
         savePlayers(players);
@@ -231,7 +208,7 @@ export default function Home() {
     const player = players[key] ?? {
       score: 0,
       streak: 0,
-      lastCheckinDayKey: null,
+      lastCheckinSlot: null,
       totalCheckins: 0,
     };
 
@@ -278,7 +255,7 @@ export default function Home() {
       <div className={styles.gridLayer} />
 
       <section className={styles.card}>
-        <h1 className={styles.title}>ROBO TAP // 02</h1>
+        <h1 className={styles.title}>ROBO TAPPER</h1>
         {!isConnected || !address ? (
           <p className={styles.warning}>Открой игру в Base App для авто-подключения кошелька.</p>
         ) : !isCorrectChain ? (
@@ -336,7 +313,7 @@ export default function Home() {
         {view === "checkin" && (
           <div className={styles.viewBlock}>
             <p className={styles.checkinText}>
-              Следующий reset check-in: <strong>00:00 МСК</strong>
+              Следующее окно check-in: <strong>каждые 10 минут</strong>
             </p>
             <p className={styles.timer}>{countdown}</p>
             <button

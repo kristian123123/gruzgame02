@@ -1,4 +1,4 @@
-# GruzGame 02
+# Robo Tapper
 
 Cyberpunk mini game for Base App:
 - tap the robot to gain score,
@@ -16,10 +16,10 @@ Cyberpunk mini game for Base App:
   - base tap value: `1`,
   - multiplier: `1 + streak * 0.1`.
 - Onchain check-in:
-  - one check-in per day,
-  - day boundary at `00:00` Moscow time,
-  - streak resets after missing a day.
-- Countdown to next check-in window (Moscow midnight).
+  - one check-in per 10-minute window,
+  - streak grows only with consecutive windows,
+  - streak resets after missing a window.
+- Countdown to next 10-minute check-in window.
 - Unique checked-in users counter.
 
 ## Stack
