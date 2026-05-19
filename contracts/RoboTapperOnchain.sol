@@ -2,12 +2,19 @@
 pragma solidity ^0.8.24;
 
 contract RoboTapperOnchain {
-    uint256 public constant CHECKIN_INTERVAL = 10 minutes;
+    uint256 public constant CHECKIN_INTERVAL = 2 minutes;
+    uint256 public constant CHECKIN_PRICE = 0.00001 ether;
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant STREAK_BONUS_BPS = 1_000; // +10% per streak step
+    string public constant BASE_BUILDER_CODE = "bc_vnh64v7g";
+    bytes public constant BASE_BUILDER_CODE_DATA_SUFFIX =
+        hex"62635f766e6836347637670b0080218021802180218021802180218021";
+
+    address public owner;
 
     struct Player {
         uint256 score;
+        uint256 totalPaid;
         uint32 streak;
         uint64 lastCheckinSlot;
         uint32 totalCheckins;
@@ -22,8 +29,25 @@ contract RoboTapperOnchain {
     address[] private _participants;
     mapping(address => bool) private _seen;
 
-    event CheckedIn(address indexed player, uint256 streak, uint256 slot);
+    event CheckedIn(address indexed player, uint256 streak, uint256 slot, uint256 paid);
     event Tapped(address indexed player, uint256 taps, uint256 gainedPoints, uint256 totalScore, uint256 streak);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event Withdrawn(address indexed to, uint256 amount);
+
+    error InvalidCheckinPayment(uint256 requiredAmount, uint256 sentAmount);
+    error Unauthorized();
+    error InvalidOwner();
+    error WithdrawFailed();
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert Unauthorized();
+        _;
+    }
+
+    constructor() {
+        owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
+    }
 
     function currentSlot() public view returns (uint256) {
         return block.timestamp / CHECKIN_INTERVAL;
@@ -33,7 +57,11 @@ contract RoboTapperOnchain {
         return players[player].lastCheckinSlot < currentSlot();
     }
 
-    function checkIn() external {
+    function checkIn() external payable {
+        if (msg.value != CHECKIN_PRICE) {
+            revert InvalidCheckinPayment(CHECKIN_PRICE, msg.value);
+        }
+
         Player storage p = players[msg.sender];
         uint256 slot = currentSlot();
         require(p.lastCheckinSlot < slot, "Already checked in this slot");
@@ -46,9 +74,10 @@ contract RoboTapperOnchain {
 
         p.lastCheckinSlot = uint64(slot);
         p.totalCheckins += 1;
+        p.totalPaid += msg.value;
         _register(msg.sender);
 
-        emit CheckedIn(msg.sender, p.streak, slot);
+        emit CheckedIn(msg.sender, p.streak, slot, msg.value);
     }
 
     function tap(uint256 tapsCount) external {
@@ -77,6 +106,26 @@ contract RoboTapperOnchain {
 
     function participantsCount() external view returns (uint256) {
         return _participants.length;
+    }
+
+    function contractBalance() external view returns (uint256) {
+        return address(this).balance;
+    }
+
+    function withdraw() external onlyOwner {
+        _withdraw(payable(owner), address(this).balance);
+    }
+
+    function withdrawTo(address payable to) external onlyOwner {
+        if (to == address(0)) revert InvalidOwner();
+        _withdraw(to, address(this).balance);
+    }
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert InvalidOwner();
+        address previousOwner = owner;
+        owner = newOwner;
+        emit OwnershipTransferred(previousOwner, newOwner);
     }
 
     function getLeaderboard(uint256 limit) external view returns (LeaderboardEntry[] memory) {
@@ -112,4 +161,12 @@ contract RoboTapperOnchain {
             _participants.push(player);
         }
     }
+
+    function _withdraw(address payable to, uint256 amount) private {
+        (bool success, ) = to.call{value: amount}("");
+        if (!success) revert WithdrawFailed();
+        emit Withdrawn(to, amount);
+    }
+
+    receive() external payable {}
 }
