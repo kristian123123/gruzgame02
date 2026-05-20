@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMiniApp } from "./providers/MiniAppProvider";
 import { encodeFunctionData, parseEther } from "viem";
 import { base } from "wagmi/chains";
-import { useAccount, useSendTransaction, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useConnect, useDisconnect, useSendTransaction, useWaitForTransactionReceipt } from "wagmi";
 import {
   ROBO_TAPPER_CHECKIN_PRICE_ETH,
   getRoboTapperContractAddress,
@@ -94,16 +94,42 @@ export default function Home() {
   const [pendingTaps, setPendingTaps] = useState(0);
   const [isSubmittingTap, setIsSubmittingTap] = useState(false);
   const [isSubmittingCheckin, setIsSubmittingCheckin] = useState(false);
+  const [showWalletOptions, setShowWalletOptions] = useState(false);
   const name = useMemo(
     () => context?.user?.displayName || (address ? `Player ${address.slice(2, 6).toUpperCase()}` : "Player"),
     [context?.user?.displayName, address],
   );
 
+  const { connectAsync, connectors, isPending: isConnectPending } = useConnect();
+  const { disconnect } = useDisconnect();
   const { data: txHash, isPending: isWritePending, sendTransactionAsync } = useSendTransaction();
   const { isLoading: isTxMining, isSuccess: isTxMined } = useWaitForTransactionReceipt({
     hash: txHash,
     query: { enabled: Boolean(txHash) },
   });
+
+  const walletConnectors = useMemo(
+    () =>
+      connectors.filter((connector) => {
+        const name = connector.name.toLowerCase();
+        return (
+          name.includes("rabby") ||
+          name.includes("metamask") ||
+          name.includes("injected") ||
+          name.includes("base")
+        );
+      }),
+    [connectors],
+  );
+
+  const preferredConnector = useMemo(
+    () =>
+      walletConnectors.find((connector) => connector.name.toLowerCase().includes("rabby")) ??
+      walletConnectors.find((connector) => connector.name.toLowerCase().includes("metamask")) ??
+      walletConnectors.find((connector) => connector.name.toLowerCase().includes("injected")) ??
+      walletConnectors[0],
+    [walletConnectors],
+  );
 
   const updateLeaderboard = useCallback(() => {
     const players = parsePlayers();
@@ -238,6 +264,22 @@ export default function Home() {
     setPendingTaps((prev) => prev + 1);
   };
 
+  const handleConnectWallet = async (connector = preferredConnector) => {
+    if (!connector) {
+      setError("Установи Rabby или MetaMask и попробуй подключить кошелек снова.");
+      return;
+    }
+
+    setError("");
+    try {
+      await connectAsync({ connector, chainId: base.id });
+      setShowWalletOptions(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось подключить кошелек.");
+      setShowWalletOptions(true);
+    }
+  };
+
   const handleSyncTaps = async () => {
     if (!address || !isCorrectChain || pendingTaps <= 0) return;
     setError("");
@@ -299,13 +341,51 @@ export default function Home() {
       <section className={styles.card}>
         <h1 className={styles.title}>ROBO TAPPER</h1>
         {!isConnected || !address ? (
-          <p className={styles.warning}>Открой игру в Base App для авто-подключения кошелька.</p>
+          <div className={styles.walletPanel}>
+            <p className={styles.warning}>Подключи Rabby, MetaMask или Base Account, чтобы играть через сайт.</p>
+            <button
+              className={styles.neonButton}
+              type="button"
+              onClick={() => {
+                if (walletConnectors.length > 1) {
+                  setShowWalletOptions((current) => !current);
+                  return;
+                }
+                void handleConnectWallet();
+              }}
+              disabled={isConnectPending}
+            >
+              {isConnectPending ? "Подключение..." : "Подключить кошелек"}
+            </button>
+            {showWalletOptions && (
+              <div className={styles.walletOptions}>
+                {walletConnectors.length === 0 ? (
+                  <p className={styles.hint}>Rabby или MetaMask не найдены в браузере.</p>
+                ) : (
+                  walletConnectors.map((connector) => (
+                    <button
+                      className={styles.smallButton}
+                      type="button"
+                      key={connector.uid}
+                      onClick={() => void handleConnectWallet(connector)}
+                      disabled={isConnectPending}
+                    >
+                      {connector.name}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         ) : !isCorrectChain ? (
           <p className={styles.warning}>Переключите сеть кошелька на Base Mainnet.</p>
         ) : (
           <div className={styles.playerLine}>
             <span>{name}</span>
             <span>{shortWallet(address)}</span>
+            <button className={styles.disconnectButton} type="button" onClick={() => disconnect()}>
+              Отключить
+            </button>
           </div>
         )}
 

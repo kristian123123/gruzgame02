@@ -9,6 +9,8 @@ import { MiniAppProvider } from "./providers/MiniAppProvider";
 const config = createConfig({
   chains: [base],
   connectors: [
+    injected({ target: "rabby" }),
+    injected({ target: "metaMask" }),
     injected(),
     baseAccount({
       appName: "Robo Tapper",
