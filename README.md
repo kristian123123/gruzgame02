@@ -1,5 +1,5 @@
 # Robo Tapper
-
+уец
 Cyberpunk mini game for Base App:
 - tap the robot to gain score,
 - perform one onchain check-in per 2-minute window,
