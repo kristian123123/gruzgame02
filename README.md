@@ -4,7 +4,7 @@ Cyberpunk mini game for Base App:
 - tap the robot to gain score,
 - perform one onchain check-in per 2-minute window,
 - increase tap multiplier by +10% per check-in streak,
-- compete in leaderboard.
+- compete in leaderboard.ы
 
 ## Features
 
