@@ -6,7 +6,7 @@ Cyberpunk mini game for Base App:
 - increase tap multiplier by +10% per check-in streak,
 - compete in leaderboard.
 
-## Features
+## Featuresвп
 
 - Menu with 3 actions:
   - `Лидерборд`
